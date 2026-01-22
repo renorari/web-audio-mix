@@ -1,0 +1,23 @@
+{
+  "name": "web-audio-mix",
+  "version": "1.0.0",
+  "description": "シンプルな音声統合ツールです。ウェブで複数の音声ファイルを一つにまとめることができます。",
+  "homepage": "https://github.com/renorari/web-audio-mix#readme",
+  "bugs": {
+    "url": "https://github.com/renorari/web-audio-mix/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/renorari/web-audio-mix.git"
+  },
+  "license": "GPL-3.0-only",
+  "author": "Renorari",
+  "type": "commonjs",
+  "main": "index.ts",
+  "scripts": {
+    "start": "node main.ts"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
