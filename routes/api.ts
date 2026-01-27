@@ -13,6 +13,33 @@ import type { Express } from "express";
 
 const router = express.Router();
 
+type TempFileEntry = {
+    filePath: string;
+    expiresAt: number;
+};
+
+const tempStore = new Map<string, TempFileEntry>();
+const tempStoreDir = path.join(os.tmpdir(), "wam-store");
+const tempTtlMs = Number(process.env.WAM_TEMP_TTL_MS ?? 15 * 60 * 1000);
+
+const ensureStoreDir = async () => {
+    await fs.mkdir(tempStoreDir, { "recursive": true });
+};
+
+const scheduleCleanup = () => {
+    setInterval(async () => {
+        const now = Date.now();
+        for (const [id, entry] of tempStore.entries()) {
+            if (entry.expiresAt <= now) {
+                tempStore.delete(id);
+                await fs.rm(entry.filePath, { "force": true });
+            }
+        }
+    }, Math.max(30_000, Math.min(tempTtlMs, 5 * 60 * 1000)));
+};
+
+scheduleCleanup();
+
 // Status Check Endpoint
 router.get("/status", (req, res) => {
     res.json({ "status": "ok", "timestamp": Date.now() });
@@ -46,20 +73,41 @@ router.post("/upload", multer().array("files"), async (req, res) => {
         // Execute ffmpeg
         cp.execFileSync("ffmpeg", ffmpegArgs);
 
-        // Send the output file
-        res.download(outputFile, `${Date.now()}_mixed_audio.mp3`, async (err) => {
-            if (err) {
-                console.error("Error sending file:", err);
-            }
+        await ensureStoreDir();
+        const downloadId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        const storedFilePath = path.join(tempStoreDir, `${downloadId}.mp3`);
+        await fs.copyFile(outputFile, storedFilePath);
 
-            // Clean up temp files
-            await fs.rm(tempDir, { "recursive": true, "force": true });
+        tempStore.set(downloadId, {
+            "filePath": storedFilePath,
+            "expiresAt": Date.now() + tempTtlMs
         });
+
+        // Clean up per-request temp files
+        await fs.rm(tempDir, { "recursive": true, "force": true });
+
+        res.redirect(302, `/api/download/${downloadId}`);
     } catch (error) {
         console.error("Error processing audio:", error);
         await fs.rm(tempDir, { "recursive": true, "force": true });
         res.status(500).json({ "status": "error", "message": "Audio processing failed" });
     }
+});
+
+// Download Endpoint (multi-download with TTL)
+router.get("/download/:id", async (req, res) => {
+    const id = req.params.id;
+    const entry = tempStore.get(id);
+    if (!entry) {
+        return res.status(404).json({ "status": "error", "message": "Not Found" });
+    }
+    if (entry.expiresAt <= Date.now()) {
+        tempStore.delete(id);
+        await fs.rm(entry.filePath, { "force": true });
+        return res.status(410).json({ "status": "error", "message": "Expired" });
+    }
+
+    res.download(entry.filePath, `${Date.now()}_mixed_audio.mp3`);
 });
 
 // 404 Handler
